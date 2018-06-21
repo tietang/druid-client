@@ -1,235 +1,50 @@
 package druid
 
 import (
-	"encoding/json"
-	"time"
+    "bytes"
+    "encoding/json"
+    "errors"
+    "io/ioutil"
+    "net/http"
 )
 
-// Aggregation Queries
-
-const (
-	Timeseries = "timeseries"
-	TopN       = "topN"
-	GroupBy    = "groupBy"
-)
-
-// Possible Granularities
-// all, none, minute, fifteen_minute, thirty_minute, hour and day.
-
-const (
-	GranularityAll           = "all"
-	GranularityNone          = "none"
-	GranularityMinute        = "minute"
-	GranularityFifteenMinute = "fifteen_minute"
-	GranularityThirtyMinute  = "thirty_minute"
-	GranularityHour          = "hour"
-	GranularityDay           = "day"
-)
-
-// Filter Types
-
-const (
-	FilterSelector   = "selector"
-	FilterRegex      = "regex"
-	FilterAnd        = "and"
-	FilterOr         = "or"
-	FilterNot        = "not"
-	FilterJavascript = "javascript"
-	FilterExtraction = "extraction" //TODO
-	FilterSearch     = "search"
-	FilterIn         = "in"
-	FilterBound      = "bound"
-)
-
-// Search Query Types
-
-const (
-	SearchInsensitiveContains = "insensitive_contains"
-	SearchFragment            = "fragment"
-	SearchContains            = "contains"
-)
-
-// Aggregator Types
-
-const (
-	AggregatorCount = "count"
-
-	AggregatorLongSum   = "longSum"
-	AggregatorDoubleSum = "doubleSum"
-
-	AggregatorDoubleMin = "doubleMin"
-	AggregatorDoubleMax = "doubleMax"
-	AggregatorLongMin   = "longMin"
-	AggregatorLongMax   = "longMax"
-
-	AggregatorHyperUnique = "hyperUnique"
-
-	AggregatorCardinality = "cardinality"
-)
-
-// Post Aggregator
-const (
-	PostAggregationTypeArithmatic  = "arithmetic"
-	PostAggregationTypeFieldAccess = "fieldAccess"
-	PostAggregationTypeConstant    = "constant"
-)
-
-// Post Aggregator Function Types
-
-const (
-	PostAggregatorFnAdd      = "+"
-	PostAggregatorFnSubtract = "-"
-	PostAggregatorFnMultiply = "*"
-	PostAggregatorFnDivide   = "/"
-	PostAggregatorFnQuotient = "quotient"
-)
-
-// Post Aggregator Field Types
-const (
-	PostAggregatorFieldFieldAccess = "fieldAccess"
-	PostAggregatorFieldConstant    = "constant"
-)
-
-type Aggregation struct {
-	Type      string `json:"type"`
-	Name      string `json:"name"`
-	FieldName string `json:"fieldName"`
+type Client struct {
+    URL string
 }
 
-type PostAggregatorField struct {
-	Type      string `json:"type"`
-	Name      string `json:"name"`
-	FieldName string `json:"fieldName,omitempty"`
-	Value     string `json:"value,omitempty"`
+type DruidError struct {
+    Error string `json:"error"`
 }
 
-type PostAggregation struct {
-	Type     string                `json:"type"`
-	Name     string                `json:"name"`
-	Fn       string                `json:"fn"`
-	Fields   []PostAggregatorField `json:"fields"`
-	Ordering string                `json:"ordering,omitempty"`
+func New(url string) *Client {
+    return &Client{url}
 }
 
-type SearchQuery struct {
-	Type          string   `json:"type"`
-	Value         string   `json:"value"`
-	Values        []string `json:"values"`
-	CaseSensitive bool     `json:"caseSensitive"`
-}
+func (c *Client) RunQuery(query *AggregationQuery) ([]byte, error) {
+    jsonBody, err := query.GetJSON()
 
-type LimitSpec struct {
-}
+    if err != nil {
+        return nil, err
+    }
 
-type Having struct {
-}
+    readerBody := bytes.NewReader(jsonBody)
 
-type Filter struct {
-	Type      string `json:"type"`
-	Dimension string `json:"dimension,omitempty"`
-	Value     string `json:"value,omitempty"`
+    resp, err := http.Post(c.URL, "application/json", readerBody)
+    if err != nil {
+        return nil, err
+    }
 
-	Fields []Filter `json:"fields,omitempty"`
+    defer resp.Body.Close()
+    body, err := ioutil.ReadAll(resp.Body)
 
-	// Regex Filter
-	Pattern string `json:"pattern,omitempty"`
+    if resp.StatusCode != 200 {
+        var queryError DruidError
+        err = json.Unmarshal(body, &queryError)
+        if err != nil {
+            return nil, err
+        }
+        return nil, errors.New(queryError.Error)
+    }
 
-	// In Filter
-	Values []string `json:"values,omitempty"`
-
-	// Javascript Filter
-	Function string `json:"function,omitempty"`
-
-	// Bound Filter
-	Lower        string `json:"lower,omitempty"`
-	Upper        string `json:"upper,omitempty"`
-	LowerStrict  bool   `json:"lowerStrict,omitempty"`
-	UpperStrict  bool   `json:"upperStrict,omitempty"`
-	AlphaNumeric bool   `json:"alphaNumeric,omitempty"`
-
-	// Search Filter
-	Query *SearchQuery `json:"query,omitempty"`
-}
-
-type AggregationQuery struct {
-	QueryType   string   `json:"queryType"`
-	DataSource  string   `json:"dataSource"`
-	Dimension   string   `json:"dimension,omitempty"`
-	Dimensions  []string `json:"dimensions,omitempty"`
-	Descending  bool     `json:"descending"`
-	Threshold   int      `json:"threshold,omitempty"`
-	Metric      string   `json:"metric,omitempty"`
-	Granularity string   `json:"granularity,omitempty"`
-	Filter      *Filter  `json:"filter"`
-
-	Aggregations []Aggregation `json:"aggregations"`
-
-	PostAggregations []PostAggregation `json:"postAggregations"`
-	Intervals        []string          `json:"intervals"`
-
-	LimitSpec *LimitSpec `json:"limitSpec,omitempty"`
-	Having    *Having    `json:"having,omitempty"`
-}
-
-type TimeInterval struct {
-	Start time.Time
-	End   time.Time
-}
-
-func TimeseriesQuery(dataSource string, descending bool, granuarity string) *AggregationQuery {
-	return &AggregationQuery{
-		QueryType:   Timeseries,
-		DataSource:  dataSource,
-		Descending:  descending,
-		Granularity: granuarity,
-	}
-}
-
-func TopNQuery(dataSource string, dimension string, metric string, threshold int, granuarity string) *AggregationQuery {
-	return &AggregationQuery{
-		QueryType:   TopN,
-		DataSource:  dataSource,
-		Dimension:   dimension,
-		Metric:      metric,
-		Threshold:   threshold,
-		Granularity: granuarity,
-	}
-}
-
-func GroupByQuery(dataSource string, dimensions []string, granuarity string) *AggregationQuery {
-	return &AggregationQuery{
-		QueryType:   GroupBy,
-		DataSource:  dataSource,
-		Dimensions:  dimensions,
-		Granularity: granuarity,
-	}
-}
-
-func (q *AggregationQuery) AddInterval(interval string) {
-	q.Intervals = append(q.Intervals, interval)
-}
-
-func (q *AggregationQuery) SetFilters(f Filter) {
-	q.Filter = &f
-}
-
-func (q *AggregationQuery) AddAggregator(aggregator Aggregation) {
-	q.Aggregations = append(q.Aggregations, aggregator)
-}
-
-func (q *AggregationQuery) AddPostAggregator(postAggregator PostAggregation) {
-	q.PostAggregations = append(q.PostAggregations, postAggregator)
-}
-
-func (q *AggregationQuery) GetJSON() ([]byte, error) {
-	j, err := json.Marshal(q)
-	if err != nil {
-		return nil, err
-	}
-	return j, nil
-}
-
-func (q *AggregationQuery) GetJSONString() (string, error) {
-	j, _ := q.GetJSON()
-	return string(j), nil
+    return body, err
 }
